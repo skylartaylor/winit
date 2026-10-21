@@ -1300,6 +1300,29 @@ impl Window {
         self.window.maybe_queue_on_main(move |w| w.set_ime_purpose(purpose))
     }
 
+    /// Discards the IME composition in progress and resets the input method's state for the
+    /// text, as when the text cursor moves to another field or the user clicks elsewhere in the
+    /// text.
+    ///
+    /// The composition is dropped, not committed, and the window receives an empty
+    /// [`Ime::Preedit`] if one was in progress. To keep the composed text, insert the last preedit
+    /// text before calling this. Has no effect while IME is not allowed.
+    ///
+    /// ## Platform-specific
+    ///
+    /// - **X11:** Resets the window's input context (`XmbResetIC`).
+    /// - **Wayland:** Disables and re-enables text input, then restores the purpose and cursor
+    ///   area.
+    /// - **Windows:** Cancels the composition string (`ImmNotifyIME` with `CPS_CANCEL`).
+    /// - **iOS / Android / Web / macOS / Orbital:** Unsupported.
+    ///
+    /// [`Ime::Preedit`]: crate::event::Ime::Preedit
+    #[inline]
+    pub fn reset_ime(&self) {
+        let _span = tracing::debug_span!("winit::Window::reset_ime").entered();
+        self.window.maybe_queue_on_main(|w| w.reset_ime())
+    }
+
     /// Brings the window to the front and sets input focus. Has no effect if the window is
     /// already in focus, minimized, or not visible.
     ///

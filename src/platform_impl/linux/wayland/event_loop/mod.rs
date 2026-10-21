@@ -23,7 +23,7 @@ use tracing::warn;
 use crate::cursor::OnlyCursorImage;
 use crate::dpi::LogicalSize;
 use crate::error::{EventLoopError, OsError as RootOsError};
-use crate::event::{Event, InnerSizeWriter, StartCause, WindowEvent};
+use crate::event::{Event, Ime, InnerSizeWriter, StartCause, WindowEvent};
 use crate::event_loop::{ActiveEventLoop as RootActiveEventLoop, ControlFlow, DeviceEvents};
 use crate::platform::pump_events::PumpStatus;
 use crate::platform_impl::platform::min_timeout;
@@ -463,6 +463,18 @@ impl<T: 'static> EventLoop<T> {
         });
         for event in buffer_sink.drain() {
             let event = event.map_nonuser_event().unwrap();
+            // Hand the window the deletion that goes with this commit, for
+            // `WindowExtWayland::take_ime_delete_surrounding`.
+            if let Event::WindowEvent { window_id, event: WindowEvent::Ime(Ime::Commit(_)) } =
+                &event
+            {
+                self.with_state(|state| {
+                    let delete = state.ime_deletions.pop_front().flatten();
+                    if let Some(window) = state.windows.get_mut().get(&window_id.0) {
+                        window.lock().unwrap().ime_delete_surrounding = delete;
+                    }
+                });
+            }
             callback(event, &self.window_target);
         }
 

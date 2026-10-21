@@ -65,7 +65,7 @@ use crate::platform_impl::platform::ime::ImeContext;
 use crate::platform_impl::platform::keyboard::KeyEventBuilder;
 use crate::platform_impl::platform::monitor::{self, MonitorHandle};
 use crate::platform_impl::platform::window_state::{
-    CursorFlags, SavedWindow, WindowFlags, WindowState,
+    CursorFlags, ImeState, SavedWindow, WindowFlags, WindowState,
 };
 use crate::platform_impl::platform::{util, Fullscreen, SelectedCursor, WindowId};
 use crate::window::{
@@ -930,6 +930,22 @@ impl Window {
 
     #[inline]
     pub fn set_ime_purpose(&self, _purpose: ImePurpose) {}
+
+    #[inline]
+    pub fn reset_ime(&self) {
+        let window = self.window;
+        let state = self.window_state.clone();
+        self.thread_executor.execute_in_thread(move || unsafe {
+            // Not while holding the lock: the IME's messages arrive during the call.
+            let composing = {
+                let state = state.lock().unwrap();
+                state.ime_allowed && state.ime_state == ImeState::Preedit
+            };
+            if composing {
+                ImeContext::current(window).cancel_composition();
+            }
+        })
+    }
 
     #[inline]
     pub fn request_user_attention(&self, request_type: Option<UserAttentionType>) {

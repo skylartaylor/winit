@@ -29,7 +29,7 @@ mod touch;
 pub use dnd::DndState;
 pub use pointer::relative_pointer::RelativePointerState;
 pub use pointer::{PointerConstraintsState, WinitPointerData, WinitPointerDataExt};
-pub use text_input::{TextInputState, ZwpTextInputV3Ext};
+pub use text_input::{surrounding_text_excerpt, TextInputState, ZwpTextInputV3Ext};
 
 use keyboard::{KeyboardData, KeyboardState};
 use text_input::TextInputData;

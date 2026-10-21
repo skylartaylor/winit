@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
+use crate::platform::wayland::ImeDeleteSurrounding;
+
 use ahash::AHashMap;
 
 use sctk::reexports::calloop::LoopHandle;
@@ -90,6 +92,9 @@ pub struct WinitState {
     /// Sink to accumulate window events from the compositor, which is latter dispatched in
     /// event loop run.
     pub events_sink: EventSink,
+
+    /// The surrounding text deletion that goes with each `Ime::Commit` in `events_sink`, in order.
+    pub ime_deletions: std::collections::VecDeque<Option<ImeDeleteSurrounding>>,
 
     /// Xdg activation.
     pub xdg_activation: Option<XdgActivationState>,
@@ -211,6 +216,7 @@ impl WinitState {
             dnd: DndState::default(),
             clipboard: Arc::new(Mutex::new(super::clipboard::ClipboardState::default())),
             events_sink: EventSink::new(),
+            ime_deletions: Default::default(),
             loop_handle,
             // Make it true by default.
             dispatched_events: true,

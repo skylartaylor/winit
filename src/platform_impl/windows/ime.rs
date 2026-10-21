@@ -5,10 +5,11 @@ use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{POINT, RECT};
 use windows_sys::Win32::Globalization::HIMC;
 use windows_sys::Win32::UI::Input::Ime::{
-    ImmAssociateContextEx, ImmGetCompositionStringW, ImmGetContext, ImmReleaseContext,
-    ImmSetCandidateWindow, ImmSetCompositionWindow, ATTR_TARGET_CONVERTED,
-    ATTR_TARGET_NOTCONVERTED, CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, GCS_COMPATTR,
-    GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, IACE_CHILDREN, IACE_DEFAULT,
+    ImmAssociateContextEx, ImmGetCompositionStringW, ImmGetContext, ImmNotifyIME,
+    ImmReleaseContext, ImmSetCandidateWindow, ImmSetCompositionWindow, ATTR_TARGET_CONVERTED,
+    ATTR_TARGET_NOTCONVERTED, CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, CPS_CANCEL,
+    GCS_COMPATTR, GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, IACE_CHILDREN, IACE_DEFAULT,
+    NI_COMPOSITIONSTR,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_IMMENABLED};
 
@@ -146,6 +147,13 @@ impl ImeContext {
             ImmSetCompositionWindow(self.himc, &composition_form);
             ImmSetCandidateWindow(self.himc, &candidate_form);
         }
+    }
+
+    /// Discards the composition. The IME then ends it with `WM_IME_COMPOSITION` and
+    /// `WM_IME_ENDCOMPOSITION`, which clear the preedit; nothing is committed, since the result
+    /// string stays empty.
+    pub unsafe fn cancel_composition(&self) {
+        unsafe { ImmNotifyIME(self.himc, NI_COMPOSITIONSTR, CPS_CANCEL, 0) };
     }
 
     pub unsafe fn set_ime_allowed(hwnd: HWND, allowed: bool) {
