@@ -62,6 +62,7 @@ use crate::platform_impl::platform::drop_handler::FileDropHandler;
 use crate::platform_impl::platform::event_loop::{self, ActiveEventLoop, DESTROY_MSG_ID};
 use crate::platform_impl::platform::icon::{self, IconType, WinCursor};
 use crate::platform_impl::platform::ime::ImeContext;
+use crate::platform_impl::platform::ime_caret::CaretArea;
 use crate::platform_impl::platform::keyboard::KeyEventBuilder;
 use crate::platform_impl::platform::monitor::{self, MonitorHandle};
 use crate::platform_impl::platform::window_state::{
@@ -913,8 +914,15 @@ impl Window {
         let window = self.window;
         let state = self.window_state.clone();
         self.thread_executor.execute_in_thread(move || unsafe {
-            let scale_factor = state.lock().unwrap().scale_factor;
+            let (scale_factor, caret) = {
+                let mut state = state.lock().unwrap();
+                let scale_factor = state.scale_factor;
+                let (x, y) = spot.to_physical::<i32>(scale_factor).into();
+                let (width, height) = size.to_physical::<i32>(scale_factor).into();
+                (scale_factor, state.system_caret.set_area(CaretArea::new(x, y, width, height)))
+            };
             ImeContext::current(window).set_ime_cursor_area(spot, size, scale_factor);
+            ImeContext::update_system_caret(window, caret);
         });
     }
 
@@ -923,8 +931,13 @@ impl Window {
         let window = self.window;
         let state = self.window_state.clone();
         self.thread_executor.execute_in_thread(move || unsafe {
-            state.lock().unwrap().ime_allowed = allowed;
+            let caret = {
+                let mut state = state.lock().unwrap();
+                state.ime_allowed = allowed;
+                state.system_caret.set_ime_allowed(allowed)
+            };
             ImeContext::set_ime_allowed(window, allowed);
+            ImeContext::update_system_caret(window, caret);
         })
     }
 

@@ -10,10 +10,13 @@ use windows_sys::Win32::UI::Input::Ime::{
     ATTR_TARGET_NOTCONVERTED, CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, GCS_COMPATTR,
     GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, IACE_CHILDREN, IACE_DEFAULT,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_IMMENABLED};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CreateCaret, DestroyCaret, GetSystemMetrics, SetCaretPos, SM_IMMENABLED,
+};
 
 use crate::dpi::{Position, Size};
 use crate::platform::windows::HWND;
+use crate::platform_impl::platform::ime_caret::CaretChange;
 
 pub struct ImeContext {
     hwnd: HWND,
@@ -157,6 +160,26 @@ impl ImeContext {
             unsafe { ImmAssociateContextEx(hwnd, 0, IACE_DEFAULT) };
         } else {
             unsafe { ImmAssociateContextEx(hwnd, 0, IACE_CHILDREN) };
+        }
+    }
+
+    /// Applies a change to the hidden system caret that follows the IME cursor area
+    /// (`ime_caret.rs`). Runs on the window's thread, which owns the caret.
+    pub unsafe fn update_system_caret(hwnd: HWND, change: Option<CaretChange>) {
+        match change {
+            None => {},
+            // A new caret is hidden, and this one is never shown.
+            Some(CaretChange::Create(area)) => unsafe {
+                if CreateCaret(hwnd, 0, area.width, area.height) != 0 {
+                    SetCaretPos(area.x, area.y);
+                }
+            },
+            Some(CaretChange::Move(area)) => unsafe {
+                SetCaretPos(area.x, area.y);
+            },
+            Some(CaretChange::Destroy) => unsafe {
+                DestroyCaret();
+            },
         }
     }
 

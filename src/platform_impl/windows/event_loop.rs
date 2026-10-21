@@ -2143,7 +2143,11 @@ unsafe fn public_window_callback_inner(
         },
 
         WM_SETFOCUS => {
-            let active_focus_changed = userdata.window_state_lock().set_focused(true);
+            let (active_focus_changed, caret) = {
+                let mut w = userdata.window_state_lock();
+                (w.set_focused(true), w.system_caret.set_focused(true))
+            };
+            unsafe { ImeContext::update_system_caret(window, caret) };
             if active_focus_changed {
                 unsafe { gain_active_focus(window, userdata) };
             }
@@ -2151,7 +2155,11 @@ unsafe fn public_window_callback_inner(
         },
 
         WM_KILLFOCUS => {
-            let active_focus_changed = userdata.window_state_lock().set_focused(false);
+            let (active_focus_changed, caret) = {
+                let mut w = userdata.window_state_lock();
+                (w.set_focused(false), w.system_caret.set_focused(false))
+            };
+            unsafe { ImeContext::update_system_caret(window, caret) };
             if active_focus_changed {
                 unsafe { lose_active_focus(window, userdata) };
             }
