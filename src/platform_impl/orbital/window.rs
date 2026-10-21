@@ -359,6 +359,9 @@ impl Window {
     pub fn set_ime_purpose(&self, _purpose: ImePurpose) {}
 
     #[inline]
+    pub fn reset_ime(&self) {}
+
+    #[inline]
     pub fn focus_window(&self) {}
 
     #[inline]

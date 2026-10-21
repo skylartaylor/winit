@@ -533,6 +533,9 @@ impl Window {
     }
 
     #[inline]
+    pub fn reset_ime(&self) {}
+
+    #[inline]
     pub fn focus_window(&self) {
         x11_or_wayland!(match self; Window(w) => w.focus_window())
     }

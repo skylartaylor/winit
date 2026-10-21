@@ -932,6 +932,9 @@ impl Window {
     pub fn set_ime_purpose(&self, _purpose: ImePurpose) {}
 
     #[inline]
+    pub fn reset_ime(&self) {}
+
+    #[inline]
     pub fn request_user_attention(&self, request_type: Option<UserAttentionType>) {
         let window = self.window;
         let active_window_handle = unsafe { GetActiveWindow() };

@@ -321,6 +321,17 @@ impl ApplicationDelegate {
         self.maybe_queue_event(Event::WindowEvent { window_id: RootWindowId(window_id), event });
     }
 
+    /// Run `handle` while no event is being handled: now, or after the current event, in order
+    /// with the events queued by `maybe_queue_window_event`.
+    pub fn maybe_queue_handler(&self, handle: impl FnOnce(&Self) + 'static) {
+        if !self.ivars().event_handler.in_use() {
+            handle(self);
+        } else {
+            let this = self.retain();
+            self.ivars().run_loop.queue_closure(move || handle(&this));
+        }
+    }
+
     pub fn handle_window_event(&self, window_id: WindowId, event: WindowEvent) {
         self.handle_event(Event::WindowEvent { window_id: RootWindowId(window_id), event });
     }
