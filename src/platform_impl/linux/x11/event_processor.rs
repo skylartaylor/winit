@@ -3,6 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::os::raw::{c_char, c_int, c_long, c_ulong};
 use std::slice;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use x11_dl::xinput2::{
     self, XIDeviceEvent, XIEnterEvent, XIFocusInEvent, XIFocusOutEvent, XIHierarchyEvent,
@@ -72,49 +73,63 @@ pub struct EventProcessor {
     pub xfiltered_modifiers: VecDeque<u8>,
     pub xmodmap: util::ModifierKeymap,
     pub is_composing: bool,
+    /// The latest IME spot requested for each window, not yet sent to the input method.
+    pub ime_spots: HashMap<XWindow, (i16, i16)>,
+    /// Until when the input method may still be answering the keys it was given.
+    pub ime_busy_until: Option<Instant>,
 }
 
+/// How long after its last message an input method is taken to have finished answering a key.
+const IME_SETTLE_TIME: Duration = Duration::from_millis(100);
+
 impl EventProcessor {
+    /// Sends the queued IME spots once the input method has gone quiet.
+    ///
+    /// Setting the spot is a synchronous XIM request. Xlib handles the keys an input method
+    /// forwards back while it waits for the reply, puts them back on the event queue in reverse
+    /// order and marks only the last one as forwarded, so the rest are filtered again: the input
+    /// method gets its own keys back as new key presses, and the app gets them after the text
+    /// committed with them. Vietnamese engines that fix a word by forwarding BackSpaces and
+    /// committing the new tail garble the text this way (rust-windowing/winit#4777). Input
+    /// methods only send keys back in answer to keys this thread gave them, so the request is
+    /// safe once no event is queued and no input method message has arrived for a while.
+    pub fn send_ime_spots(&mut self) {
+        if self.ime_spots.is_empty()
+            || self.ime_busy_until.is_some_and(|until| Instant::now() < until)
+            || self.poll()
+        {
+            return;
+        }
+        self.ime_busy_until = None;
+        let window_target = Self::window_target_mut(&mut self.target);
+        if let Some(ime) = window_target.ime.as_mut() {
+            let ime = ime.get_mut();
+            for (window_id, (x, y)) in self.ime_spots.drain() {
+                ime.send_xim_spot(window_id, x, y);
+            }
+        } else {
+            self.ime_spots.clear();
+        }
+    }
+
+    /// When the event loop has to wake up to send the queued IME spots.
+    pub fn ime_spots_deadline(&self) -> Option<Instant> {
+        if self.ime_spots.is_empty() {
+            None
+        } else {
+            Some(self.ime_busy_until.unwrap_or_else(Instant::now))
+        }
+    }
+
     pub fn process_event<T: 'static, F>(&mut self, xev: &mut XEvent, mut callback: F)
     where
         F: FnMut(&RootAEL, Event<T>),
     {
+        // Requests made since the last event go first: a reset or allow request made when focus
+        // moved to another field has to reach the input method before the next key does.
+        self.handle_ime_requests(&mut callback);
         self.process_xevent(xev, &mut callback);
-
-        let window_target = Self::window_target_mut(&mut self.target);
-
-        // Handle IME requests.
-        let mut ime_focus = None;
-        while let Ok(request) = self.ime_receiver.try_recv() {
-            let ime = match window_target.ime.as_mut() {
-                Some(ime) => ime,
-                None => continue,
-            };
-            let ime = ime.get_mut();
-            match request {
-                ImeRequest::Position(window_id, x, y) => {
-                    ime.send_xim_spot(window_id, x, y);
-                },
-                ImeRequest::Allow(window_id, allowed) => {
-                    let result = ime.set_ime_allowed(window_id, allowed);
-                    if self.active_window == Some(window_id as xproto::Window) {
-                        match result {
-                            Ok(true) => ime_focus = Some(window_id),
-                            Err(_) => ime_focus = None,
-                            Ok(false) => {},
-                        }
-                    }
-                },
-            }
-        }
-
-        // PdfCraft patch: replacing the focused window's input context (egui allows IME whenever a
-        // text field gains focus and disallows it when it loses focus) generates no focus event, so
-        // the new context stayed unfocused until the window lost and regained focus. Focus the last
-        // context replaced in this batch, once (rust-windowing/winit#4727).
-        if let (Some(window_id), Some(ime)) = (ime_focus, window_target.ime.as_mut()) {
-            let _ = ime.get_mut().focus(window_id);
-        }
+        self.handle_ime_requests(&mut callback);
 
         // Drain IME events.
         while let Ok((window, event)) = self.ime_event_receiver.try_recv() {
@@ -141,6 +156,58 @@ impl EventProcessor {
             };
 
             callback(&self.target, Event::WindowEvent { window_id, event });
+        }
+    }
+
+    fn handle_ime_requests<T: 'static, F>(&mut self, callback: &mut F)
+    where
+        F: FnMut(&RootAEL, Event<T>),
+    {
+        let window_target = Self::window_target_mut(&mut self.target);
+
+        let mut reset_windows = Vec::new();
+        while let Ok(request) = self.ime_receiver.try_recv() {
+            let ime = match window_target.ime.as_mut() {
+                Some(ime) => ime,
+                None => continue,
+            };
+            let ime = ime.get_mut();
+            match request {
+                ImeRequest::Position(window_id, x, y) => {
+                    self.ime_spots.insert(window_id, (x, y));
+                },
+                // Toolkits allow IME when a text field gains focus and disallow it when the field
+                // loses it, while the window keeps the focus, so no focus event follows. The
+                // context is focused here, or reset and unfocused so the input method drops the
+                // composition and its candidate window.
+                ImeRequest::Allow(window_id, allowed) => {
+                    if let Ok(true) = ime.set_ime_allowed(window_id, allowed) {
+                        if !allowed {
+                            let _ = ime.reset(window_id);
+                            let _ = ime.unfocus(window_id);
+                        } else if self.active_window == Some(window_id as xproto::Window) {
+                            let _ = ime.focus(window_id);
+                        }
+                    }
+                },
+                ImeRequest::Reset(window_id) if ime.is_ime_allowed(window_id) => {
+                    if let Ok(true) = ime.reset(window_id) {
+                        reset_windows.push(window_id);
+                    }
+                },
+                ImeRequest::Reset(_) => {},
+            }
+        }
+        self.send_ime_spots();
+
+        // Input methods don't always end the preedit they discard on reset.
+        for window in reset_windows {
+            if self.is_composing {
+                self.is_composing = false;
+                let event = WindowEvent::Ime(Ime::Preedit(String::new(), None));
+                let window_id = mkwid(window as xproto::Window);
+                callback(&self.target, Event::WindowEvent { window_id, event });
+            }
         }
     }
 
@@ -197,6 +264,7 @@ impl EventProcessor {
 
         // Don't process event if it was filtered.
         if filtered {
+            self.ime_busy_until = Some(Instant::now() + IME_SETTLE_TIME);
             return;
         }
 

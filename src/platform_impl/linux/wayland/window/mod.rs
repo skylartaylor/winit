@@ -651,7 +651,7 @@ impl Window {
 
     #[inline]
     pub fn set_ime_cursor_area(&self, position: Position, size: Size) {
-        let window_state = self.window_state.lock().unwrap();
+        let mut window_state = self.window_state.lock().unwrap();
         if window_state.ime_allowed() {
             let scale_factor = window_state.scale_factor();
             let position = position.to_logical(scale_factor);
@@ -674,6 +674,16 @@ impl Window {
     #[inline]
     pub fn set_ime_purpose(&self, purpose: ImePurpose) {
         self.window_state.lock().unwrap().set_ime_purpose(purpose);
+    }
+
+    #[inline]
+    pub fn reset_ime(&self) {
+        let window_state = self.window_state.lock().unwrap();
+        if window_state.ime_allowed() && window_state.reset_ime() {
+            let event = WindowEvent::Ime(Ime::Preedit(String::new(), None));
+            self.window_events_sink.lock().unwrap().push_window_event(event, self.window_id);
+            self.event_loop_awakener.ping();
+        }
     }
 
     #[inline]

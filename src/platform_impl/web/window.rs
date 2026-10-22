@@ -339,6 +339,9 @@ impl Inner {
     }
 
     #[inline]
+    pub fn reset_ime(&self) {}
+
+    #[inline]
     pub fn focus_window(&self) {
         let _ = self.canvas.borrow().raw().focus();
     }

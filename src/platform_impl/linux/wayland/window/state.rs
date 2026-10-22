@@ -120,6 +120,9 @@ pub struct WindowState {
     /// The current IME purpose.
     ime_purpose: ImePurpose,
 
+    /// The last IME cursor area, as `x, y, width, height`.
+    ime_cursor_area: Option<(i32, i32, i32, i32)>,
+
     /// The text inputs observed on the window.
     text_inputs: Vec<ZwpTextInputV3>,
 
@@ -225,6 +228,7 @@ impl WindowState {
             has_pending_move: None,
             ime_allowed: false,
             ime_purpose: ImePurpose::Normal,
+            ime_cursor_area: None,
             last_configure: None,
             max_inner_size: None,
             min_inner_size: MIN_WINDOW_SIZE,
@@ -1111,16 +1115,37 @@ impl WindowState {
     }
 
     /// Set the IME position.
-    pub fn set_ime_cursor_area(&self, position: LogicalPosition<u32>, size: LogicalSize<u32>) {
+    pub fn set_ime_cursor_area(&mut self, position: LogicalPosition<u32>, size: LogicalSize<u32>) {
         // FIXME: This won't fly unless user will have a way to request IME window per seat, since
         // the ime windows will be overlapping, but winit doesn't expose API to specify for
         // which seat we're setting IME position.
         let (x, y) = (position.x as i32, position.y as i32);
         let (width, height) = (size.width as i32, size.height as i32);
+        self.ime_cursor_area = Some((x, y, width, height));
         for text_input in self.text_inputs.iter() {
             text_input.set_cursor_rectangle(x, y, width, height);
             text_input.commit();
         }
+    }
+
+    /// Discards the composition. Returns `true` if the window was showing a preedit.
+    pub fn reset_ime(&self) -> bool {
+        let mut preedit_shown = false;
+        for text_input in &self.text_inputs {
+            // A disable and an enable in separate commits make the compositor deactivate and
+            // reactivate the input method. Enabling resets the text input's state, so the
+            // purpose and cursor area are sent again.
+            text_input.disable();
+            text_input.commit();
+            text_input.enable();
+            text_input.set_content_type_by_purpose(self.ime_purpose);
+            if let Some((x, y, width, height)) = self.ime_cursor_area {
+                text_input.set_cursor_rectangle(x, y, width, height);
+            }
+            text_input.commit();
+            preedit_shown |= text_input.take_preedit();
+        }
+        preedit_shown
     }
 
     /// Set the IME purpose.

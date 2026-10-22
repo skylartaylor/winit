@@ -40,6 +40,9 @@ pub enum ImeRequest {
 
     /// Allow IME input for the given `window_id`.
     Allow(ffi::Window, bool),
+
+    /// Discard the composition of the given `window_id`.
+    Reset(ffi::Window),
 }
 
 #[derive(Debug)]
@@ -167,10 +170,11 @@ impl Ime {
         if self.is_destroyed() {
             return Ok(false);
         }
-        if let Some(&mut Some(ref mut context)) = self.inner.contexts.get_mut(&window) {
-            context.focus(&self.xconn).map(|_| true)
-        } else {
-            Ok(false)
+        match self.inner.contexts.get_mut(&window) {
+            // A context with IME disallowed stays unfocused, so the input method doesn't show
+            // itself for a window that doesn't take text.
+            Some(Some(context)) if context.is_allowed() => context.focus(&self.xconn).map(|_| true),
+            _ => Ok(false),
         }
     }
 
@@ -194,8 +198,20 @@ impl Ime {
         }
     }
 
-    // PdfCraft patch: returns whether the window's input context was replaced, so the caller can
-    // focus the new one (rust-windowing/winit#4727).
+    /// Discards the window's composition, if it has a context.
+    pub fn reset(&mut self, window: ffi::Window) -> Result<bool, XError> {
+        if self.is_destroyed() {
+            return Ok(false);
+        }
+        if let Some(&mut Some(ref mut context)) = self.inner.contexts.get_mut(&window) {
+            context.reset(&self.xconn).map(|_| true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Returns whether IME was turned on or off. The window keeps its input context either way;
+    /// when the window has the focus, the caller focuses the context, or resets and unfocuses it.
     pub fn set_ime_allowed(
         &mut self,
         window: ffi::Window,
@@ -205,17 +221,18 @@ impl Ime {
             return Ok(false);
         }
 
-        if let Some(&mut Some(ref mut context)) = self.inner.contexts.get_mut(&window) {
-            if allowed == context.is_allowed() {
-                return Ok(false);
-            }
+        match self.inner.contexts.get_mut(&window) {
+            Some(Some(context)) => {
+                if allowed == context.is_allowed() {
+                    return Ok(false);
+                }
+                context.set_allowed(allowed);
+                let event = if allowed { ImeEvent::Enabled } else { ImeEvent::Disabled };
+                self.inner.event_sender.send((window, event)).expect("Failed to send IME event");
+                Ok(true)
+            },
+            _ => self.create_context(window, allowed),
         }
-
-        // Remove context for that window.
-        let _ = self.remove_context(window);
-
-        // Create new context supporting IME input.
-        self.create_context(window, allowed)
     }
 
     pub fn is_ime_allowed(&self, window: ffi::Window) -> bool {

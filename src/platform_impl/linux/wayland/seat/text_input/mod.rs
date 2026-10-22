@@ -125,6 +125,7 @@ impl Dispatch<ZwpTextInputV3, TextInputData, WinitState> for TextInputState {
                 if text_input_data.pending_commit.is_some()
                     || text_input_data.pending_preedit.is_none()
                 {
+                    text_input_data.preedit_shown = false;
                     state.events_sink.push_window_event(
                         WindowEvent::Ime(Ime::Preedit(String::new(), None)),
                         window_id,
@@ -140,6 +141,7 @@ impl Dispatch<ZwpTextInputV3, TextInputData, WinitState> for TextInputState {
 
                 // Send preedit.
                 if let Some(preedit) = text_input_data.pending_preedit.take() {
+                    text_input_data.preedit_shown = true;
                     let cursor_range =
                         preedit.cursor_begin.map(|b| (b, preedit.cursor_end.unwrap_or(b)));
 
@@ -159,9 +161,19 @@ impl Dispatch<ZwpTextInputV3, TextInputData, WinitState> for TextInputState {
 
 pub trait ZwpTextInputV3Ext {
     fn set_content_type_by_purpose(&self, purpose: ImePurpose);
+
+    /// Drops the preedit not yet sent and returns whether the window was showing one.
+    fn take_preedit(&self) -> bool;
 }
 
 impl ZwpTextInputV3Ext for ZwpTextInputV3 {
+    fn take_preedit(&self) -> bool {
+        let Some(data) = self.data::<TextInputData>() else { return false };
+        let mut data = data.inner.lock().unwrap();
+        data.pending_preedit = None;
+        std::mem::take(&mut data.preedit_shown)
+    }
+
     fn set_content_type_by_purpose(&self, purpose: ImePurpose) {
         let (hint, purpose) = match purpose {
             ImePurpose::Normal => (ContentHint::None, ContentPurpose::Normal),
@@ -188,6 +200,9 @@ pub struct TextInputDataInner {
 
     /// The preedit to submit on `done`.
     pending_preedit: Option<Preedit>,
+
+    /// Whether the window was last sent a preedit rather than its end.
+    preedit_shown: bool,
 }
 
 /// The state of the preedit.
