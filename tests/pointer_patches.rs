@@ -38,6 +38,33 @@ fn macos_title_bar_drags_reach_the_app() {
     );
 }
 
+#[test]
+fn macos_mouse_moves_set_the_cursor_again() {
+    // winit shows its cursor, or hides the pointer, with a cursor rect. After Spotlight closes,
+    // macOS showed the arrow over a window that hid the pointer, and kept it while the pointer
+    // stayed in the window: apps drawing their own cursor showed two (storytold/vectorcraft#2020).
+    // A move over the view of the key window sets the view's cursor again; moves from outside the
+    // view, or over a window in front of it (a floating panel), don't, or the pointer would be
+    // hidden there.
+    let view = source("macos/view.rs");
+    let moved = section(&view, "#[method(mouseMoved:)]", "\n        }\n");
+    assert!(
+        moved.contains("self.reapply_cursor(event);"),
+        "mouseMoved doesn't set the cursor again"
+    );
+    let reapply = section(&view, "fn reapply_cursor(", "\n    }\n");
+    assert!(
+        reapply.contains("isKeyWindow()"),
+        "the cursor is set again in a window that isn't key"
+    );
+    assert!(reapply.contains("bounds.size.width"), "the cursor is set again outside the view");
+    assert!(
+        reapply.contains("windowNumberAtPoint_belowWindowWithWindowNumber"),
+        "the cursor is set again over a window in front of the view"
+    );
+    assert!(reapply.contains("invisible_cursor()"), "a hidden pointer isn't hidden again");
+}
+
 // The scroll-phase policy is plain Rust over winit's own `TouchPhase`, so its tests run here.
 #[cfg(wayland_platform)]
 mod event {

@@ -8,7 +8,7 @@ use objc2::runtime::{AnyObject, Sel};
 use objc2::{declare_class, msg_send_id, mutability, sel, ClassType, DeclaredClass};
 use objc2_app_kit::{
     NSApplication, NSCursor, NSEvent, NSEventPhase, NSResponder, NSTextInputClient,
-    NSTrackingRectTag, NSView, NSViewFrameDidChangeNotification,
+    NSTrackingRectTag, NSView, NSViewFrameDidChangeNotification, NSWindow,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSAttributedString, NSAttributedStringKey, NSCopying,
@@ -814,6 +814,7 @@ declare_class!(
         #[method(mouseMoved:)]
         fn mouse_moved(&self, event: &NSEvent) {
             self.mouse_motion(event);
+            self.reapply_cursor(event);
         }
 
         #[method(mouseDragged:)]
@@ -1412,6 +1413,45 @@ impl WinitView {
             state: button_state,
             button,
         });
+    }
+
+    /// Set the view's cursor again as the pointer moves over the view of the key window. The cursor
+    /// rect alone can leave another cursor showing: after Spotlight closes, macOS shows the arrow
+    /// over a window that hides the pointer, and keeps it while the pointer stays in the window,
+    /// though the window is key again and its cursor rect was reset. Setting the cursor when the
+    /// window becomes key is too early to fix it. Only moves over the view itself: the key window
+    /// gets moves from outside it too, and from over windows in front of it (an app's floating
+    /// panels, other apps' windows), and setting the cursor there would hide the pointer over them.
+    fn reapply_cursor(&self, event: &NSEvent) {
+        let window = self.window();
+        if !window.isKeyWindow() {
+            return;
+        }
+        let in_window = unsafe { event.locationInWindow() };
+        let on_screen = unsafe { window.convertPointToScreen(in_window) };
+        let front = unsafe {
+            NSWindow::windowNumberAtPoint_belowWindowWithWindowNumber(
+                on_screen,
+                0,
+                MainThreadMarker::from(self),
+            )
+        };
+        if front != unsafe { window.windowNumber() } {
+            return;
+        }
+        let point = self.convertPoint_fromView(in_window, None);
+        let bounds = self.bounds();
+        if point.x < bounds.origin.x
+            || point.y < bounds.origin.y
+            || point.x >= bounds.origin.x + bounds.size.width
+            || point.y >= bounds.origin.y + bounds.size.height
+        {
+            return;
+        }
+        let cursor_state = self.ivars().cursor_state.borrow();
+        let cursor =
+            if cursor_state.visible { cursor_state.cursor.clone() } else { invisible_cursor() };
+        unsafe { cursor.set() };
     }
 
     fn mouse_motion(&self, event: &NSEvent) {
