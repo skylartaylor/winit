@@ -659,6 +659,31 @@ fn macos_key_committed_through_ime_is_sent_once() {
 }
 
 #[test]
+fn macos_keys_the_input_method_takes_are_not_typed() {
+    // 九方 M9 (Q9) takes its nine-grid code digits without calling `insertText`,
+    // `setMarkedText` or `doCommandBySelector`, so winit 0.30.13 sent them on as
+    // `KeyboardInput` and the app typed the code (egui text fields showed 9, 1, 2…). The input
+    // context reports whether it took the key; when it did and nothing came back, the key-down
+    // isn't sent. Text committed for the key still arrives as `Ime::Commit`, and a command AppKit
+    // forwards (`doCommandBySelector`) still reaches the app.
+    let view = source("macos/view.rs");
+    let key_down = view_method(&view, "fn key_down(");
+    assert!(
+        key_down.contains("Some(input_context) => unsafe { input_context.handleEvent(&event) },"),
+        "keyDown doesn't ask the input context whether it took the key"
+    );
+    assert!(
+        key_down.contains("let silently_consumed_by_ime =")
+            && key_down.contains("ime_consumed_key && !self.ivars().key_interpreted.get();"),
+        "keyDown doesn't tell a silently consumed key apart from application typing"
+    );
+    assert!(
+        key_down.contains("let had_ime_input = had_ime_input || silently_consumed_by_ime;"),
+        "a key the input method took without a callback is sent as KeyboardInput"
+    );
+}
+
+#[test]
 fn macos_reset_ime_discards_the_composition() {
     // `Window::reset_ime` ends a composition when the caret moves to other text with IME still
     // allowed. On macOS it has the input method discard its marked text, so the abandoned text

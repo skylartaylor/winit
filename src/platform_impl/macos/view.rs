@@ -623,12 +623,23 @@ declare_class!(
                 self.ivars().ime_document.borrow_mut().reset();
             }
 
+            let mut ime_consumed_key = false;
             if self.ivars().ime_allowed.get() {
                 let events_for_nsview = NSArray::from_slice(&[&*event]);
                 self.ivars().in_key_down.set(true);
                 self.ivars().key_interpreted.set(false);
                 let outer_key = self.ivars().key_characters.replace(Some(characters));
-                unsafe { self.interpretKeyEvents(&events_for_nsview) };
+                // Q9 (九方 M9) patch: ask the input context whether it took the key.
+                // `interpretKeyEvents` reports nothing, so an input method that swallows a key
+                // without calling anything back (Q9's nine-grid code digits) is indistinguishable
+                // from application typing, and its code is sent as `KeyboardInput`.
+                ime_consumed_key = match self.inputContext() {
+                    Some(input_context) => unsafe { input_context.handleEvent(&event) },
+                    None => {
+                        unsafe { self.interpretKeyEvents(&events_for_nsview) };
+                        false
+                    },
+                };
 
                 let same_context = self.ivars().ime_allowed.get()
                     && self.ivars().ime_state.get() == ImeState::Disabled
@@ -638,7 +649,13 @@ declare_class!(
                     && self.ime_retry_has_focus();
                 let retry = self.ivars().ime_startup.borrow_mut().finish(serial, same_context);
                 if retry {
-                    unsafe { self.interpretKeyEvents(&events_for_nsview) };
+                    ime_consumed_key |= match self.inputContext() {
+                        Some(input_context) => unsafe { input_context.handleEvent(&event) },
+                        None => {
+                            unsafe { self.interpretKeyEvents(&events_for_nsview) };
+                            false
+                        },
+                    };
                 }
                 self.ivars().key_characters.replace(outer_key);
                 self.ivars().in_key_down.set(false);
@@ -675,6 +692,14 @@ declare_class!(
                 && unsafe { event.isARepeat() }
                 && !self.ivars().key_interpreted.get()
                 && !modifiers.intersects(ModifiersState::SUPER | ModifiersState::CONTROL);
+
+            // Q9 (九方 M9) patch: a key the input context took without calling anything back
+            // carries the input method's code, not application text, so it isn't sent as
+            // `KeyboardInput`. (Clearing `KeyEvent::text` alone isn't enough: egui-winit falls
+            // back to `logical_key.to_text()` and still types the digit.)
+            let silently_consumed_by_ime =
+                ime_consumed_key && !self.ivars().key_interpreted.get();
+            let had_ime_input = had_ime_input || silently_consumed_by_ime;
 
             if (!had_ime_input || self.ivars().forward_key_to_app.get()) && !held_for_accents {
                 let key_event = create_key_event(&event, true, unsafe { event.isARepeat() });
