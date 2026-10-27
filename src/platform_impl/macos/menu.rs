@@ -15,6 +15,15 @@ pub fn initialize(app: &NSApplication) {
     let app_menu_item = NSMenuItem::new(mtm);
     menubar.addItem(&app_menu_item);
 
+    // AppKit appends Emoji & Symbols, with the shortcuts set in System Settings
+    // (Control-Command-Space, Fn/Globe-E by default), to a menu titled "Edit" that is in the menu
+    // bar when the app finishes launching.
+    let edit_menu_item = NSMenuItem::new(mtm);
+    unsafe { edit_menu_item.setTitle(ns_string!("Edit")) };
+    let edit_menu = unsafe { NSMenu::initWithTitle(mtm.alloc(), ns_string!("Edit")) };
+    edit_menu_item.setSubmenu(Some(&edit_menu));
+    menubar.addItem(&edit_menu_item);
+
     let app_menu = NSMenu::new(mtm);
     let process_name = NSProcessInfo::processInfo().processName();
 

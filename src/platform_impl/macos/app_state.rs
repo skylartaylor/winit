@@ -71,6 +71,11 @@ declare_class!(
             self.should_terminate(application)
         }
 
+        #[method(applicationWillFinishLaunching:)]
+        fn app_will_finish_launching(&self, notification: &NSNotification) {
+            self.will_finish_launching(notification)
+        }
+
         #[method(applicationDidFinishLaunching:)]
         fn app_did_finish_launching(&self, notification: &NSNotification) {
             self.did_finish_launching(notification)
@@ -116,6 +121,16 @@ impl ApplicationDelegate {
         unsafe { msg_send_id![super(this), init] }
     }
 
+    // The menubar initialization should be before the `NewEvents` event, to allow overriding of
+    // the default menu even if it's created, and before AppKit finishes launching, which adds the
+    // system's items (Emoji & Symbols) to the Edit menu then.
+    fn will_finish_launching(&self, _notification: &NSNotification) {
+        trace_scope!("applicationWillFinishLaunching:");
+        if self.ivars().default_menu {
+            menu::initialize(&NSApplication::sharedApplication(MainThreadMarker::from(self)));
+        }
+    }
+
     // NOTE: This will, globally, only be run once, no matter how many
     // `EventLoop`s the user creates.
     fn did_finish_launching(&self, _notification: &NSNotification) {
@@ -149,12 +164,6 @@ impl ApplicationDelegate {
         window_activation_hack(&app);
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(self.ivars().activate_ignoring_other_apps);
-
-        if self.ivars().default_menu {
-            // The menubar initialization should be before the `NewEvents` event, to allow
-            // overriding of the default menu even if it's created
-            menu::initialize(&app);
-        }
 
         self.ivars().waker.borrow_mut().start();
 

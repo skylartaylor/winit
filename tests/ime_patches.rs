@@ -859,3 +859,28 @@ fn windows_keys_taken_by_the_ime_are_not_sent() {
         "a key the IME took is sent as a key press"
     );
 }
+
+#[test]
+fn macos_menu_bar_has_an_edit_menu_before_launch_finishes() {
+    // AppKit adds Emoji & Symbols, with the shortcuts set in System Settings (Control-Command-Space,
+    // Fn/Globe-E), to the menu bar item titled "Edit" while the app finishes launching. The
+    // default menu bar had no Edit menu and was built in `applicationDidFinishLaunching:`, after
+    // that, so the picker's shortcuts did nothing.
+    let menu = source("macos/menu.rs");
+    let initialize = section(&menu, "pub fn initialize(", "\n}\n");
+    assert!(
+        initialize.contains(r#"setTitle(ns_string!("Edit"))"#),
+        "the default menu bar has no Edit menu"
+    );
+    let app_state = source("macos/app_state.rs");
+    let will_finish = section(&app_state, "fn will_finish_launching(", "\n    }\n");
+    assert!(
+        will_finish.contains("menu::initialize("),
+        "the default menu bar isn't built before AppKit finishes launching"
+    );
+    let did_finish = section(&app_state, "fn did_finish_launching(", "\n    }\n");
+    assert!(
+        !did_finish.contains("menu::initialize("),
+        "the default menu bar is built after AppKit finished launching"
+    );
+}
