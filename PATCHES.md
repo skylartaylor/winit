@@ -34,6 +34,7 @@ input lives in `craft-tablet`).
 | W25 | `eb4007da` | X11/Wayland: `platform::latin_layout::KeyEventExtLatinLayout`, the key on the first Latin layout group for shortcuts on non-Latin layouts | none; to be proposed | upstream release with an equivalent | storytold/winit PR #5; craft-libs#198 (K2) |
 | W26 | `2b9cd1cf` | macOS: replaced text is deleted by UTF-8 byte count with the commit (`WindowExtMacOS::take_ime_delete_surrounding`, same shape as W27) | master: `Ime::DeleteSurrounding` (a new `Ime` variant breaks 0.30 matchers) | the egui → 0.31 move | storytold/winit PR #6 (`d103edae`) |
 | W27 | `f40c76a2` | Wayland: text-input-v3 surrounding text (`WindowExtWayland::set_ime_surrounding_text`, `set_ime_surrounding_text_with_change_cause`, `clear_ime_surrounding_text`), delete-surrounding attached to the commit (`take_ime_delete_surrounding` → `ImeDeleteSurrounding { before_bytes, after_bytes }`), per-seat preedit ownership and outgoing state waiting for a matching `done` (E21b) | master has both as core API (`Ime::DeleteSurrounding`) | the egui → 0.31 move | storytold/winit PR #7; craft-libs#198 (I7) |
+| W32 | `fdb18bee`, `d3553fba` | Windows: undecorated windows lose `WS_CAPTION`/`WS_BORDER` (keeping `WS_SYSMENU`, `WS_SIZEBOX`, min/max boxes), so no compositor offsets the surface by a hidden frame; a maximize stays in the monitor's work area, up to `max_inner_size` (`WM_GETMINMAXINFO`, `WM_WINDOWPOSCHANGING` including frame changes, client clipped in `WM_NCCALCSIZE`) and stops a pixel short of an auto-hidden taskbar; DWM rounds their corners unless the app set a preference (`frame.rs`, `frame_math.rs`, + `tests/windows_frame.rs`) | none; to be proposed | upstream fix | photocraft#2246, #3144, #3864, #4845 (PhotoCraft's and VectorCraft's `window_frame.rs` guard) |
 
 Conflict resolved by hand: `wayland/seat/mod.rs` `remove_seat` keeps all three cleanups — cancel a
 file drag (W15), remove the seat from winit's clipboard (W15), destroy the seat's text input (W2).
@@ -54,6 +55,9 @@ so a key that ends a composition acts only if the IME passes the real key on aft
 Microsoft Korean IME (type 한) and the Microsoft Japanese IME (inside a composition), check that the
 arrow keys, Enter, Tab and Backspace still act. If they don't, limit the suppression to keys the
 composition consumes.
+
+W32 needs a run on Windows 10 and 11 before it is proposed upstream; the checklist is in its PR.
+Its geometry is tested on every platform (`tests/windows_frame.rs`).
 
 Not in this cut: W16 (Wayland pinch/rotation, #4778), the earlier tablet backport (replaced by `craft-tablet`).
 

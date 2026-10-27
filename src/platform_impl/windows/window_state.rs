@@ -1,6 +1,7 @@
 use crate::dpi::{PhysicalPosition, PhysicalSize, Size};
 use crate::icon::Icon;
 use crate::keyboard::ModifiersState;
+use crate::platform::windows::CornerPreference;
 use crate::platform_impl::platform::ime_caret::SystemCaret;
 use crate::platform_impl::platform::{event_loop, util, Fullscreen, SelectedCursor};
 use crate::window::{Theme, WindowAttributes};
@@ -58,6 +59,10 @@ pub(crate) struct WindowState {
     pub dragging: bool,
 
     pub skip_taskbar: bool,
+
+    /// Set by `set_corner_preference`; until then the corners follow
+    /// `WindowFlags::default_corner_preference`.
+    pub corner_preference: Option<CornerPreference>,
 }
 
 #[derive(Clone)]
@@ -180,6 +185,8 @@ impl WindowState {
             dragging: false,
 
             skip_taskbar: false,
+
+            corner_preference: None,
         }
     }
 
@@ -282,12 +289,20 @@ impl WindowFlags {
         if self.contains(WindowFlags::NO_BACK_BUFFER) {
             style_ex |= WS_EX_NOREDIRECTIONBITMAP;
         }
+        if !self.contains(WindowFlags::MARKER_DECORATIONS) {
+            // `WM_NCCALCSIZE` gives an undecorated window's whole frame to the client area, but
+            // with `WS_CAPTION` some compositors still offset the surface by the frame: black
+            // bars at the top and left, and the pointer off from what is drawn
+            // (storytold/photocraft#2246). `WS_SYSMENU`, `WS_SIZEBOX` and the minimize and
+            // maximize boxes stay for Aero snap, Win+arrow keys and the taskbar menu. Without a
+            // caption Windows maximizes over the taskbar; `frame.rs` keeps the maximize to the
+            // work area.
+            style &= !(WS_CAPTION | WS_BORDER);
+        }
         if self.contains(WindowFlags::CHILD) {
             style |= WS_CHILD; // This is incompatible with WS_POPUP if that gets added eventually.
 
-            // Remove decorations window styles for child
             if !self.contains(WindowFlags::MARKER_DECORATIONS) {
-                style &= !(WS_CAPTION | WS_BORDER);
                 style_ex &= !WS_EX_WINDOWEDGE;
             }
         }
@@ -314,6 +329,27 @@ impl WindowFlags {
         }
 
         (style, style_ex)
+    }
+
+    /// An undecorated window that isn't a child or full screen, whose frame `frame.rs` handles.
+    pub fn is_undecorated_top_level(self) -> bool {
+        !self.intersects(
+            WindowFlags::MARKER_DECORATIONS
+                | WindowFlags::CHILD
+                | WindowFlags::MARKER_EXCLUSIVE_FULLSCREEN
+                | WindowFlags::MARKER_BORDERLESS_FULLSCREEN,
+        )
+    }
+
+    /// The DWM corners for a window without a corner preference of its own: rounded for an
+    /// undecorated top-level window, which DWM would otherwise draw square without a caption,
+    /// and the system's choice for the rest.
+    pub fn default_corner_preference(self) -> CornerPreference {
+        if self.intersects(WindowFlags::MARKER_DECORATIONS | WindowFlags::CHILD) {
+            CornerPreference::Default
+        } else {
+            CornerPreference::Round
+        }
     }
 
     /// Adjust the window client rectangle to the return value, if present.

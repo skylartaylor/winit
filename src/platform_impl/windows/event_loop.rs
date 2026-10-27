@@ -84,7 +84,7 @@ use crate::platform_impl::platform::window_state::{
     CursorFlags, ImeState, WindowFlags, WindowState,
 };
 use crate::platform_impl::platform::{
-    raw_input, util, wrap_device_id, Fullscreen, WindowId, DEVICE_ID,
+    frame, raw_input, util, wrap_device_id, Fullscreen, WindowId, DEVICE_ID,
 };
 use crate::window::{
     CustomCursor as RootCustomCursor, CustomCursorSource, Theme, WindowId as RootWindowId,
@@ -1211,7 +1211,12 @@ unsafe fn public_window_callback_inner(
                 // See https://github.com/MicrosoftEdge/WebView2Feedback/issues/2549
                 let monitor = unsafe { MonitorFromRect(&params.rgrc[0], MONITOR_DEFAULTTONULL) };
                 if let Ok(monitor_info) = monitor::get_monitor_info(monitor) {
-                    params.rgrc[0] = monitor_info.monitorInfo.rcWork;
+                    let work = monitor_info.monitorInfo.rcWork;
+                    params.rgrc[0] = if window_flags.contains(WindowFlags::CHILD) {
+                        work
+                    } else {
+                        frame::maximized_client_rect(params.rgrc[0], work)
+                    };
                 }
             } else if window_flags.contains(WindowFlags::MARKER_UNDECORATED_SHADOW) {
                 // Extend the client area to cover the whole non-client area.
@@ -1334,6 +1339,16 @@ unsafe fn public_window_callback_inner(
         },
         WM_WINDOWPOSCHANGING => {
             let mut window_state = userdata.window_state_lock();
+            if window_state.fullscreen.is_none()
+                && window_state.window_flags.is_undecorated_top_level()
+            {
+                let max_size = frame::max_outer_size(window, &window_state);
+                drop(window_state);
+                let window_pos = unsafe { &mut *(lparam as *mut WINDOWPOS) };
+                frame::keep_maximized_rect(window, window_pos, max_size);
+                result = ProcResult::Value(0);
+                return;
+            }
             if let Some(ref mut fullscreen) = window_state.fullscreen {
                 let window_pos = unsafe { &mut *(lparam as *mut WINDOWPOS) };
                 let new_rect = RECT {
@@ -2233,6 +2248,13 @@ unsafe fn public_window_callback_inner(
                         window_flags.adjust_size(window, max_size).into();
                     unsafe { (*mmi).ptMaxTrackSize = POINT { x: width as i32, y: height as i32 } };
                 }
+            }
+            let undecorated =
+                window_state.fullscreen.is_none() && window_flags.is_undecorated_top_level();
+            let max_size = frame::max_outer_size(window, &window_state);
+            drop(window_state);
+            if undecorated {
+                frame::set_max_info(window, unsafe { &mut *mmi }, max_size);
             }
 
             result = ProcResult::Value(0);

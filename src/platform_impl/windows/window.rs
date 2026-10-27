@@ -33,16 +33,17 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::Input::Touch::{RegisterTouchWindow, TWF_WANTPALM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, EnableMenuItem, FlashWindowEx, GetClientRect, GetCursorPos,
-    GetForegroundWindow, GetSystemMenu, GetSystemMetrics, GetWindowPlacement, GetWindowTextLengthW,
-    GetWindowTextW, IsWindowVisible, LoadCursorW, PeekMessageW, PostMessageW, RegisterClassExW,
-    SendMessageW, SetCursor, SetCursorPos, SetForegroundWindow, SetMenuDefaultItem,
-    SetWindowDisplayAffinity, SetWindowPlacement, SetWindowPos, SetWindowTextW, TrackPopupMenu,
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FLASHWINFO, FLASHW_ALL, FLASHW_STOP, FLASHW_TIMERNOFG,
-    FLASHW_TRAY, GWLP_HINSTANCE, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTLEFT, HTRIGHT,
-    HTTOP, HTTOPLEFT, HTTOPRIGHT, MENU_ITEM_STATE, MFS_DISABLED, MFS_ENABLED, MF_BYCOMMAND,
-    NID_READY, PM_NOREMOVE, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE,
-    SM_DIGITIZER, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, TPM_LEFTALIGN,
-    TPM_RETURNCMD, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_NCLBUTTONDOWN, WM_SYSCOMMAND, WNDCLASSEXW,
+    GetForegroundWindow, GetSystemMenu, GetSystemMetrics, GetWindowLongW, GetWindowPlacement,
+    GetWindowTextLengthW, GetWindowTextW, IsWindowVisible, LoadCursorW, PeekMessageW, PostMessageW,
+    RegisterClassExW, SendMessageW, SetCursor, SetCursorPos, SetForegroundWindow,
+    SetMenuDefaultItem, SetWindowDisplayAffinity, SetWindowLongW, SetWindowPlacement, SetWindowPos,
+    SetWindowTextW, TrackPopupMenu, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, FLASHWINFO, FLASHW_ALL,
+    FLASHW_STOP, FLASHW_TIMERNOFG, FLASHW_TRAY, GWLP_HINSTANCE, GWL_STYLE, HTBOTTOM, HTBOTTOMLEFT,
+    HTBOTTOMRIGHT, HTCAPTION, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, MENU_ITEM_STATE,
+    MFS_DISABLED, MFS_ENABLED, MF_BYCOMMAND, NID_READY, PM_NOREMOVE, SC_CLOSE, SC_MAXIMIZE,
+    SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SM_DIGITIZER, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, TPM_LEFTALIGN, TPM_RETURNCMD,
+    WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_NCLBUTTONDOWN, WM_SYSCOMMAND, WNDCLASSEXW,
 };
 
 use tracing::warn;
@@ -861,6 +862,7 @@ impl Window {
             WindowState::set_window_flags(window_state.lock().unwrap(), window, |f| {
                 f.set(WindowFlags::MARKER_DECORATIONS, decorations)
             });
+            apply_default_corner_preference(window, &window_state);
         });
     }
 
@@ -1129,15 +1131,33 @@ impl Window {
 
     #[inline]
     pub fn set_corner_preference(&self, preference: CornerPreference) {
-        unsafe {
-            DwmSetWindowAttribute(
-                self.hwnd(),
-                DWMWA_WINDOW_CORNER_PREFERENCE as u32,
-                &(preference as DWM_WINDOW_CORNER_PREFERENCE) as *const _ as _,
-                mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as _,
-            );
-        }
+        self.window_state_lock().corner_preference = Some(preference);
+        unsafe { set_corner_preference(self.hwnd(), preference) };
     }
+}
+
+/// Sets the DWM corner preference; Windows before 11 ignores it.
+unsafe fn set_corner_preference(window: HWND, preference: CornerPreference) {
+    unsafe {
+        DwmSetWindowAttribute(
+            window,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            &(preference as DWM_WINDOW_CORNER_PREFERENCE) as *const _ as _,
+            mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as _,
+        );
+    }
+}
+
+/// Gives the window the corners its decorations call for, unless the app chose its own.
+fn apply_default_corner_preference(window: HWND, window_state: &Mutex<WindowState>) {
+    let preference = {
+        let state = window_state.lock().unwrap();
+        match state.corner_preference {
+            Some(_) => return,
+            None => state.window_flags.default_corner_preference(),
+        }
+    };
+    unsafe { set_corner_preference(window, preference) };
 }
 
 impl Drop for Window {
@@ -1289,6 +1309,25 @@ impl InitData<'_> {
             }
             unsafe { DeleteObject(region) };
         }
+
+        // `CreateWindowExW` gives a window that is neither a child nor a popup `WS_CAPTION`
+        // whatever style it asked for, so an undecorated window takes its style again here.
+        let (style, _) = win.window_state_lock().window_flags.to_window_styles();
+        unsafe {
+            if GetWindowLongW(win.hwnd(), GWL_STYLE) as u32 != style {
+                SetWindowLongW(win.hwnd(), GWL_STYLE, style as i32);
+                SetWindowPos(
+                    win.hwnd(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+                );
+            }
+        }
+        apply_default_corner_preference(win.hwnd(), &win.window_state);
 
         win.set_skip_taskbar(self.attributes.platform_specific.skip_taskbar);
         win.set_window_icon(self.attributes.window_icon.clone());

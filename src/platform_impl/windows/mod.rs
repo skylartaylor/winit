@@ -186,6 +186,8 @@ mod definitions;
 mod dpi;
 mod drop_handler;
 mod event_loop;
+mod frame;
+mod frame_math;
 mod icon;
 mod ime;
 mod ime_caret;
