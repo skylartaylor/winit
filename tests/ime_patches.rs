@@ -659,6 +659,28 @@ fn macos_key_committed_through_ime_is_sent_once() {
 }
 
 #[test]
+fn macos_jamo_typed_after_a_commit_is_committed() {
+    // Apple Korean answers the key that starts a new syllable with `insertText` of the finished
+    // syllable (a replacement, so a commit) and then `insertText` of the key's own jamo, the
+    // key's characters. That text was left to the key's `KeyboardInput`, which isn't sent after a
+    // commit in the same key press, so the jamo was lost and the next replacement deleted the
+    // syllable before it: "안녕" typed "녕".
+    let view = source("macos/view.rs");
+    let insert_text = view_method(&view, "fn insert_text(");
+    assert!(
+        insert_text
+            .contains("PlainInsert::KeyText if !self.ivars().committed_in_key_down.get() => {"),
+        "the key's text is left to a KeyboardInput that a commit suppressed"
+    );
+    assert!(
+        insert_text.contains(
+            "PlainInsert::KeyText | PlainInsert::Commit if self.ivars().ime_allowed.get() => {"
+        ),
+        "the key's text after a commit isn't committed"
+    );
+}
+
+#[test]
 fn macos_reset_ime_discards_the_composition() {
     // `Window::reset_ime` ends a composition when the caret moves to other text with IME still
     // allowed. On macOS it has the input method discard its marked text, so the abandoned text

@@ -520,7 +520,10 @@ declare_class!(
                 // menu with a digit.
                 let key_characters = self.ivars().key_characters.borrow().clone();
                 match plain_insert(&string, key_characters.as_deref()) {
-                    PlainInsert::KeyText => {
+                    // Once a commit was sent during this key press, `keyDown:` doesn't send the
+                    // key's `KeyboardInput` (`committed_in_key_down`): Apple Korean commits the
+                    // syllable before it and then inserts the key's jamo, which was lost.
+                    PlainInsert::KeyText if !self.ivars().committed_in_key_down.get() => {
                         let delete = self.replaced(replacement_range);
                         // The deletion goes before the key's `KeyboardInput`, which `keyDown:`
                         // sends after this returns.
@@ -530,7 +533,7 @@ declare_class!(
                         }
                         self.ivars().ime_document.borrow_mut().insert(&string)
                     },
-                    PlainInsert::Commit if self.ivars().ime_allowed.get() => {
+                    PlainInsert::KeyText | PlainInsert::Commit if self.ivars().ime_allowed.get() => {
                         let delete = self.replaced(replacement_range);
                         self.notify_ime_enabled();
                         if self.ivars().in_key_down.get() {
@@ -541,7 +544,7 @@ declare_class!(
                         self.queue_commit(string, delete);
                     },
                     // Dropped text leaves `ime_document` as it is.
-                    PlainInsert::Commit | PlainInsert::Ignore => {},
+                    PlainInsert::KeyText | PlainInsert::Commit | PlainInsert::Ignore => {},
                 }
             }
         }
