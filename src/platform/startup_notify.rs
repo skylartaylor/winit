@@ -45,6 +45,36 @@ pub trait WindowExtStartupNotify {
     ///
     /// The token will be delivered inside
     fn request_activation_token(&self) -> Result<AsyncRequestSerial, NotSupportedError>;
+
+    /// Ask the windowing system to activate this existing window with `token`.
+    ///
+    /// [`WindowAttributesExtStartupNotify::with_activation_token`] applies a token only while a
+    /// window is created. Use this method for a window that is already mapped. A typical case is
+    /// an application that gets a token from another process over IPC, because the user asked
+    /// that process to hand focus over.
+    ///
+    /// The token stays in memory. This method does not read or write the process environment.
+    ///
+    /// # Platform-specific
+    ///
+    /// - **Wayland:** Sends `xdg_activation_v1.activate(token, surface)` for this window. The
+    ///   compositor decides what happens. A token without a valid input serial, or one that is too
+    ///   old, may only mark the window as needing attention. The call gives no result, so watch for
+    ///   [`WindowEvent::Focused`] to see whether it worked. Returns [`NotSupportedError`] when the
+    ///   compositor has no `xdg_activation_v1` global.
+    /// - **X11:** Sends a `_NET_ACTIVE_WINDOW` client message to the root window with source
+    ///   indication 1 (application). The timestamp comes from the `_TIME` suffix of the token (the
+    ///   form [`request_activation_token`] produces). A token without that suffix uses
+    ///   `CurrentTime`. The window manager decides, so focus stealing prevention can still refuse.
+    ///
+    /// This is not [`Window::focus_window`]. That method takes no token and does nothing on
+    /// Wayland.
+    ///
+    /// An invalid token is not an error. The windowing system ignores it.
+    ///
+    /// [`request_activation_token`]: Self::request_activation_token
+    /// [`WindowEvent::Focused`]: crate::event::WindowEvent::Focused
+    fn activate_with_token(&self, token: ActivationToken) -> Result<(), NotSupportedError>;
 }
 
 pub trait WindowAttributesExtStartupNotify {
@@ -71,6 +101,10 @@ impl EventLoopExtStartupNotify for ActiveEventLoop {
 impl WindowExtStartupNotify for Window {
     fn request_activation_token(&self) -> Result<AsyncRequestSerial, NotSupportedError> {
         self.window.request_activation_token()
+    }
+
+    fn activate_with_token(&self, token: ActivationToken) -> Result<(), NotSupportedError> {
+        self.window.activate_with_token(token)
     }
 }
 

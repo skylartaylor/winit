@@ -11,6 +11,8 @@ on how to add them:
 ```md
 ### Added
 
+- On X11 and Wayland, add `WindowExtStartupNotify::activate_with_token`, which activates an existing
+  window with an `ActivationToken` kept in memory.
 - Add `Window::turbo()`, implemented on X11, Wayland, and Web.
 - On X11, add `Window::some_rare_api`.
 - On X11, add `Window::even_more_rare_api`.

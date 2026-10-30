@@ -27,8 +27,8 @@ use crate::platform_impl::{
     PlatformIcon, VideoModeHandle as PlatformVideoModeHandle,
 };
 use crate::window::{
-    CursorGrabMode, ImePurpose, ResizeDirection, Theme, UserAttentionType, WindowAttributes,
-    WindowButtons, WindowLevel,
+    ActivationToken, CursorGrabMode, ImePurpose, ResizeDirection, Theme, UserAttentionType,
+    WindowAttributes, WindowButtons, WindowLevel,
 };
 
 use super::util::{self, SelectedCursor};
@@ -1848,6 +1848,31 @@ impl UnownedWindow {
             .send((self.id(), serial))
             .expect("activation token channel should never be closed");
         Ok(serial)
+    }
+
+    pub(crate) fn activate_with_token(
+        &self,
+        token: ActivationToken,
+    ) -> Result<(), NotSupportedError> {
+        let atoms = self.xconn.atoms();
+        let time = super::activation::activation_token_time(&token.token);
+        self.xconn
+            .send_client_msg(
+                self.xwindow,
+                self.root,
+                atoms[_NET_ACTIVE_WINDOW],
+                Some(
+                    xproto::EventMask::SUBSTRUCTURE_REDIRECT
+                        | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+                ),
+                // Source indication 1 is a normal application, then the timestamp.
+                [1, time, 0, 0, 0],
+            )
+            .expect_then_ignore_error("Failed to send client message");
+        if let Err(e) = self.xconn.flush_requests() {
+            tracing::error!("`flush` returned an error when activating the window: {}", e);
+        }
+        Ok(())
     }
 
     #[inline]

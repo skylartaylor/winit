@@ -137,6 +137,19 @@ impl XConnection {
     }
 }
 
+/// The X server timestamp in a token, or `CurrentTime` when it has none.
+///
+/// [`XConnection::request_activation_token`] writes tokens as `hostname+pid+"_TIME"+time`, the
+/// form the startup notification specification recommends. Launchers that follow it put the
+/// time after the last `_TIME`.
+pub(crate) fn activation_token_time(token: &str) -> u32 {
+    token
+        .rsplit_once("_TIME")
+        .map(|(_, time)| time)
+        .and_then(|time| time.parse::<u32>().ok())
+        .unwrap_or(x11rb::CURRENT_TIME)
+}
+
 /// Quote a literal string as per the startup notification specification.
 fn quote_string(s: &str, target: &mut Vec<u8>) {
     let total_len = s.len().checked_add(3).expect("quote string overflow");
@@ -178,6 +191,25 @@ fn push_display(buffer: &mut Vec<u8>, display: &impl std::fmt::Display) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_time_is_read_from_the_time_suffix() {
+        assert_eq!(activation_token_time("host1234_TIME987654"), 987654);
+        assert_eq!(activation_token_time("a_TIMEb_TIME7"), 7);
+        assert_eq!(activation_token_time("host_TIME0"), 0);
+        assert_eq!(activation_token_time("host_TIME4294967295"), u32::MAX);
+    }
+
+    #[test]
+    fn token_time_falls_back_to_current_time() {
+        let current = x11rb::CURRENT_TIME;
+        assert_eq!(activation_token_time(""), current);
+        assert_eq!(activation_token_time("no-time-here"), current);
+        assert_eq!(activation_token_time("host_TIME"), current);
+        assert_eq!(activation_token_time("host_TIME12x"), current);
+        assert_eq!(activation_token_time("host_TIME4294967296"), current);
+        assert_eq!(activation_token_time("host_TIME-5"), current);
+    }
 
     #[test]
     fn properly_escapes_x11_messages() {
