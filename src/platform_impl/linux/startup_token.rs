@@ -110,17 +110,41 @@ mod tests {
         assert!(choose(None, &AtomicBool::new(false), || Some(limit)).is_some());
     }
 
+    /// The variable the child below reads its token from.
+    const VAR: &str = "WINIT_W30_TEST_ACTIVATION_TOKEN";
+    /// Set only in the child: the token it must take, or empty for none.
+    const EXPECT: &str = "WINIT_W30_TEST_EXPECT";
+
     #[test]
     fn the_token_is_read_from_the_variable_when_set_and_not_when_cleared() {
-        // A variable no other test reads, so setting it while tests run in parallel races nothing.
-        const VAR: &str = "WINIT_W30_TEST_ACTIVATION_TOKEN";
-        std::env::set_var(VAR, "gnome-shell/CADCraft/42");
-        assert_eq!(
-            choose(None, &AtomicBool::new(false), from_env(VAR)),
-            token("gnome-shell/CADCraft/42")
-        );
-        std::env::remove_var(VAR);
-        assert_eq!(choose(None, &AtomicBool::new(false), from_env(VAR)), None);
+        // The environment is given to a child process rather than changed here: `set_var` while
+        // other test threads run is the unsoundness this module avoids by leaving the variable.
+        let name = concat!(module_path!(), "::the_first_window_reads_the_variable_in_a_child");
+        let name = name.split_once("::").unwrap().1;
+        for value in [Some("gnome-shell/CADCraft/42"), None] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child.args([name, "--exact", "--test-threads=1"]).env(EXPECT, value.unwrap_or(""));
+            match value {
+                Some(value) => child.env(VAR, value),
+                None => child.env_remove(VAR),
+            };
+            let out = child.output().unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success(),
+                "{value:?}: {stdout}{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(stdout.contains("1 passed"), "{value:?}: the child ran no test: {stdout}");
+        }
+    }
+
+    #[test]
+    fn the_first_window_reads_the_variable_in_a_child() {
+        let Some(expect) = std::env::var_os(EXPECT) else { return };
+        let expect = Some(expect.into_string().unwrap()).filter(|e| !e.is_empty());
+        let received = choose(None, &AtomicBool::new(false), from_env(VAR));
+        assert_eq!(received, expect.as_deref().and_then(token));
     }
 
     #[test]
