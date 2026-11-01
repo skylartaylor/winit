@@ -289,8 +289,11 @@ pub enum WindowEvent {
     ///
     /// ## Platform-specific
     ///
-    /// - Only available on **macOS** and **iOS**.
+    /// - Only available on **macOS**, **iOS** and **Wayland**.
     /// - On iOS, not recognized by default. It must be enabled when needed.
+    /// - On Wayland, reported for two-finger touchpad pinches when the compositor supports
+    ///   `zwp_pointer_gestures_v1`. `delta` is the natural log of the change in scale since the
+    ///   previous event, so `delta.exp()` is the factor to zoom by.
     PinchGesture {
         device_id: DeviceId,
         /// Positive values indicate magnification (zooming in) and  negative
@@ -341,8 +344,9 @@ pub enum WindowEvent {
     ///
     /// ## Platform-specific
     ///
-    /// - Only available on **macOS** and **iOS**.
+    /// - Only available on **macOS**, **iOS** and **Wayland**.
     /// - On iOS, not recognized by default. It must be enabled when needed.
+    /// - On Wayland, reported together with the two-finger pinch gesture.
     RotationGesture {
         device_id: DeviceId,
         /// change in rotation in degrees
