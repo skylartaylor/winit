@@ -31,7 +31,12 @@ pub(crate) fn with_token<T, E>(
     var: &str,
     create: impl FnOnce(Option<ActivationToken>) -> Result<T, E>,
 ) -> Result<T, E> {
-    create_with(given, &TAKEN, || std::env::var(var).ok(), create)
+    create_with(given, &TAKEN, from_env(var), create)
+}
+
+/// Reads the launcher's token from the environment variable `var`.
+fn from_env(var: &str) -> impl FnOnce() -> Option<String> + '_ {
+    move || std::env::var(var).ok()
 }
 
 fn create_with<T, E>(
@@ -44,7 +49,9 @@ fn create_with<T, E>(
     let token = if given.is_some() || !first {
         given
     } else {
-        read().filter(|token| !token.is_empty() && token.len() <= MAX_TOKEN_LEN).map(ActivationToken::from_raw)
+        read()
+            .filter(|token| !token.is_empty() && token.len() <= MAX_TOKEN_LEN)
+            .map(ActivationToken::from_raw)
     };
     let window = create(token)?;
     // The first window spends the launcher's token, whether or not it was given one.
@@ -61,14 +68,21 @@ mod tests {
     }
 
     /// The token a successfully created window received.
-    fn choose(given: Option<ActivationToken>, taken: &AtomicBool, read: impl FnOnce() -> Option<String>) -> Option<ActivationToken> {
+    fn choose(
+        given: Option<ActivationToken>,
+        taken: &AtomicBool,
+        read: impl FnOnce() -> Option<String>,
+    ) -> Option<ActivationToken> {
         create_with(given, taken, read, Ok::<_, ()>).ok().flatten()
     }
 
     #[test]
     fn the_first_window_takes_the_launchers_token() {
         let taken = AtomicBool::new(false);
-        assert_eq!(choose(None, &taken, || Some("gnome-shell/PdfCraft/1234".into())), token("gnome-shell/PdfCraft/1234"));
+        assert_eq!(
+            choose(None, &taken, || Some("gnome-shell/PdfCraft/1234".into())),
+            token("gnome-shell/PdfCraft/1234")
+        );
     }
 
     #[test]
@@ -94,6 +108,19 @@ mod tests {
         assert_eq!(choose(None, &AtomicBool::new(false), || Some(long)), None);
         let limit = "x".repeat(MAX_TOKEN_LEN);
         assert!(choose(None, &AtomicBool::new(false), || Some(limit)).is_some());
+    }
+
+    #[test]
+    fn the_token_is_read_from_the_variable_when_set_and_not_when_cleared() {
+        // A variable no other test reads, so setting it while tests run in parallel races nothing.
+        const VAR: &str = "WINIT_W30_TEST_ACTIVATION_TOKEN";
+        std::env::set_var(VAR, "gnome-shell/CADCraft/42");
+        assert_eq!(
+            choose(None, &AtomicBool::new(false), from_env(VAR)),
+            token("gnome-shell/CADCraft/42")
+        );
+        std::env::remove_var(VAR);
+        assert_eq!(choose(None, &AtomicBool::new(false), from_env(VAR)), None);
     }
 
     #[test]
