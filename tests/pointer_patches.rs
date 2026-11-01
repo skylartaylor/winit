@@ -61,3 +61,16 @@ fn wayland_pixel_wheels_report_moved() {
         "axis events don't take their phase from the scroll source"
     );
 }
+
+#[test]
+fn windows_touch_force_needs_a_pressure_reading() {
+    // A touch screen without a pressure sensor leaves `TOUCH_MASK_PRESSURE` out of `touchMask`,
+    // and Windows still fills `pressure` with its default, 512. Read as a force, every finger had
+    // exactly 0.5, so apps couldn't tell a finger from a Windows pen, which winit reports as touch
+    // too (storytold/pdfcraft#5685). Both forces are read only under their mask's pressure bit.
+    let event_loop = source("windows/event_loop.rs");
+    let touch = section(&event_loop, "PT_TOUCH => {", "PT_PEN => {");
+    assert!(touch.contains("TOUCH_MASK_PRESSURE"), "a touch's force doesn't check touchMask");
+    let pen = section(&event_loop, "PT_PEN => {", "_ => None,");
+    assert!(pen.contains("PEN_MASK_PRESSURE"), "a pen's force doesn't check penMask");
+}

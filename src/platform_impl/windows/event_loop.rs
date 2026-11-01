@@ -47,20 +47,21 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetMenu, LoadCursorW, MsgWaitForMultipleObjectsEx, PeekMessageW, PostMessageW,
     RegisterClassExW, RegisterWindowMessageA, SetCursor, SetWindowPos, TranslateMessage,
     CREATESTRUCTW, GIDC_ARRIVAL, GIDC_REMOVAL, GWL_STYLE, GWL_USERDATA, HTCAPTION, HTCLIENT,
-    MINMAXINFO, MNC_CLOSE, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS, PM_REMOVE, PT_PEN,
-    PT_TOUCH, QS_ALLINPUT, RI_MOUSE_HWHEEL, RI_MOUSE_WHEEL, SC_MINIMIZE, SC_RESTORE,
-    SIZE_MAXIMIZED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WHEEL_DELTA, WINDOWPOS,
-    WMSZ_BOTTOM, WMSZ_BOTTOMLEFT, WMSZ_BOTTOMRIGHT, WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT,
-    WMSZ_TOPRIGHT, WM_CAPTURECHANGED, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_DPICHANGED,
-    WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
-    WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION, WM_INPUT, WM_INPUT_DEVICE_CHANGE, WM_KEYDOWN,
-    WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MENUCHAR, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCALCSIZE,
-    WM_NCCREATE, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_PAINT, WM_POINTERDOWN, WM_POINTERUP,
-    WM_POINTERUPDATE, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SETTINGCHANGE,
-    WM_SIZE, WM_SIZING, WM_SYSCOMMAND, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TOUCH, WM_WINDOWPOSCHANGED,
-    WM_WINDOWPOSCHANGING, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_OVERLAPPED, WS_POPUP, WS_VISIBLE,
+    MINMAXINFO, MNC_CLOSE, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS, PEN_MASK_PRESSURE,
+    PM_REMOVE, PT_PEN, PT_TOUCH, QS_ALLINPUT, RI_MOUSE_HWHEEL, RI_MOUSE_WHEEL, SC_MINIMIZE,
+    SC_RESTORE, SIZE_MAXIMIZED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    TOUCH_MASK_PRESSURE, WHEEL_DELTA, WINDOWPOS, WMSZ_BOTTOM, WMSZ_BOTTOMLEFT, WMSZ_BOTTOMRIGHT,
+    WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WM_CAPTURECHANGED, WM_CLOSE,
+    WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO,
+    WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION,
+    WM_INPUT, WM_INPUT_DEVICE_CHANGE, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MENUCHAR, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCCREATE, WM_NCDESTROY, WM_NCLBUTTONDOWN,
+    WM_PAINT, WM_POINTERDOWN, WM_POINTERUP, WM_POINTERUPDATE, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SETCURSOR, WM_SETFOCUS, WM_SETTINGCHANGE, WM_SIZE, WM_SIZING, WM_SYSCOMMAND, WM_SYSKEYDOWN,
+    WM_SYSKEYUP, WM_TOUCH, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    WS_OVERLAPPED, WS_POPUP, WS_VISIBLE,
 };
 
 use crate::dpi::{PhysicalPosition, PhysicalSize};
@@ -1029,6 +1030,17 @@ fn normalize_pointer_pressure(pressure: u32) -> Option<Force> {
     match pressure {
         1..=1024 => Some(Force::Normalized(pressure as f64 / 1024.0)),
         _ => None,
+    }
+}
+
+/// A touch or pen contact's force: its `pressure`, when `mask` (`touchMask` or `penMask`) has the
+/// `reported` bit. Windows fills `pressure` in either way, and for a touch screen without a
+/// pressure sensor it is `POINTER_TOUCH_INFO`'s default, 512: no reading, so no force.
+fn reported_pointer_pressure(mask: u32, reported: u32, pressure: u32) -> Option<Force> {
+    if mask & reported != 0 {
+        normalize_pointer_pressure(pressure)
+    } else {
+        None
     }
 }
 
@@ -2097,9 +2109,14 @@ unsafe fn public_window_callback_inner(
                                     )
                                 } {
                                     0 => None,
-                                    _ => normalize_pointer_pressure(unsafe {
-                                        touch_info.assume_init().pressure
-                                    }),
+                                    _ => {
+                                        let touch_info = unsafe { touch_info.assume_init() };
+                                        reported_pointer_pressure(
+                                            touch_info.touchMask,
+                                            TOUCH_MASK_PRESSURE,
+                                            touch_info.pressure,
+                                        )
+                                    },
                                 }
                             })
                         },
@@ -2110,9 +2127,14 @@ unsafe fn public_window_callback_inner(
                                     GetPointerPenInfo(pointer_info.pointerId, pen_info.as_mut_ptr())
                                 } {
                                     0 => None,
-                                    _ => normalize_pointer_pressure(unsafe {
-                                        pen_info.assume_init().pressure
-                                    }),
+                                    _ => {
+                                        let pen_info = unsafe { pen_info.assume_init() };
+                                        reported_pointer_pressure(
+                                            pen_info.penMask,
+                                            PEN_MASK_PRESSURE,
+                                            pen_info.pressure,
+                                        )
+                                    },
                                 }
                             })
                         },
@@ -2864,5 +2886,47 @@ mod ime_reset_pending_message_tests {
             DestroyWindow(second);
             UnregisterClassW(name.as_ptr(), instance);
         }
+    }
+}
+
+#[cfg(test)]
+mod pointer_pressure_tests {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        PEN_MASK_PRESSURE, PEN_MASK_ROTATION, PEN_MASK_TILT_X, PEN_MASK_TILT_Y,
+        TOUCH_MASK_CONTACTAREA, TOUCH_MASK_ORIENTATION, TOUCH_MASK_PRESSURE,
+    };
+
+    use super::reported_pointer_pressure;
+    use crate::event::Force;
+
+    // What a touch screen without a pressure sensor reports, with `pressure` at its default, 512.
+    const NO_PRESSURE: u32 = TOUCH_MASK_CONTACTAREA | TOUCH_MASK_ORIENTATION;
+
+    #[test]
+    fn a_touch_without_a_pressure_reading_has_no_force() {
+        assert_eq!(reported_pointer_pressure(NO_PRESSURE, TOUCH_MASK_PRESSURE, 512), None);
+        assert_eq!(reported_pointer_pressure(0, TOUCH_MASK_PRESSURE, 300), None);
+    }
+
+    #[test]
+    fn a_reported_pressure_is_the_force() {
+        let touch = NO_PRESSURE | TOUCH_MASK_PRESSURE;
+        assert_eq!(
+            reported_pointer_pressure(touch, TOUCH_MASK_PRESSURE, 512),
+            Some(Force::Normalized(0.5))
+        );
+        assert_eq!(
+            reported_pointer_pressure(PEN_MASK_PRESSURE, PEN_MASK_PRESSURE, 256),
+            Some(Force::Normalized(0.25))
+        );
+        // A reported pressure of 0 (or out of range) is still no force.
+        assert_eq!(reported_pointer_pressure(PEN_MASK_PRESSURE, PEN_MASK_PRESSURE, 0), None);
+        assert_eq!(reported_pointer_pressure(PEN_MASK_PRESSURE, PEN_MASK_PRESSURE, 1025), None);
+    }
+
+    #[test]
+    fn a_pen_without_a_pressure_reading_has_no_force() {
+        let no_pressure = PEN_MASK_ROTATION | PEN_MASK_TILT_X | PEN_MASK_TILT_Y;
+        assert_eq!(reported_pointer_pressure(no_pressure, PEN_MASK_PRESSURE, 700), None);
     }
 }
